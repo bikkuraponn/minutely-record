@@ -1,0 +1,32 @@
+name: Minutely Record
+on:
+  repository_dispatch:
+    types: [minutely-trigger]
+jobs:
+  run-python:
+    runs-on: ubuntu-latest
+    environment: YAJU-toolbox-record
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify secret
+        env:
+          CRONJOB_SECRET: ${{ secrets.CRONJOB_SECRET }}
+        run: |
+          if [[ "${{ github.event.client_payload.secret }}" != "$CRONJOB_SECRET" ]]; then
+            echo "Invalid secret"
+            exit 1
+          fi
+      - name: Run script
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          VIDEO_ID: ${{ vars.VIDEO_ID }}
+          CHANNEL_ID: ${{ vars.CHANNEL_ID }}
+          TURSO_URL: ${{ secrets.TURSO_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python record_minutely.py
