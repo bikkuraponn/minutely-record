@@ -18,7 +18,11 @@ class TursoClient:
 
     def execute(self, sql: str, args: list | None = None) -> dict:
         """単一 SQL を実行。SELECT の場合は query() を使うこと。"""
-        return self._pipeline([{"sql": sql, "args": args or []}])
+        result = self._pipeline([{"sql": sql, "args": args or []}])
+        for rs in result.get("results", []):
+            if rs.get("type") == "error":
+                raise RuntimeError(f"Turso error: {rs['error']['message']}")
+        return result
 
     def batch(self, statements: list[dict]) -> dict:
         """複数 SQL を1リクエストで実行（トランザクション相当）。
