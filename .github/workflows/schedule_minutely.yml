@@ -2,10 +2,14 @@ name: Minutely Record
 on:
   repository_dispatch:
     types: [minutely-trigger]
+concurrency:
+  group: minutely-record
+  cancel-in-progress: false
 jobs:
   run-python:
     runs-on: ubuntu-latest
     environment: YAJU-toolbox-record
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
