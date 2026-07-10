@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS stats_minutely (
 )
 """
 
+_CREATE_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_stats_minutely_created ON stats_minutely(created_at)
+"""
+
 _INSERT = """
 INSERT INTO stats_minutely (
     created_at, comment_count, view_count, like_count,
@@ -80,6 +84,7 @@ def fetch_with_rotation(fn, *args):
 
 turso = TursoClient(os.getenv("TURSO_URL"), os.getenv("TURSO_AUTH_TOKEN"))
 turso.execute(_CREATE_TABLE)
+turso.execute(_CREATE_INDEX)
 
 wait_until_next_minute()
 
