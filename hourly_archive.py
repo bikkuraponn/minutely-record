@@ -65,6 +65,19 @@ def is_hour_already_archived(supabase_client, now_utc: datetime) -> bool:
     return len(res.data) > 0
 
 
+_DUPLICATE_HOUR_INDEX = "stats_jst_hour_unique"
+
+
+def _is_duplicate_hour_error(e: Exception) -> bool:
+    """「同じJST時間帯の行が既にある」という一意制約違反かどうか。
+
+    Supabase(PostgREST)側は 23505 unique_violation を返す。インデックス名でも
+    照合して、無関係な一意制約違反まで「記録済み」として飲み込まないようにする。
+    """
+    text = str(e)
+    return "23505" in text or _DUPLICATE_HOUR_INDEX in text
+
+
 def _clear_button_stats_cache() -> None:
     flask_base_url = os.getenv("FLASK_BASE_URL")
     api_token = os.getenv("API_TOKEN")
@@ -116,7 +129,24 @@ def archive_if_due(
         "lailala_topic_comment_count": lailala_stats["total_comments"],
     }
 
-    supabase_client.table(TABLE_NAME).insert(record).execute()
+    # is_hour_already_archived() のチェックとこのINSERTはアトミックではない。
+    # GitHub Actions の concurrency は cancel-in-progress: false なので、実行が
+    # 詰まって2つの分のrunが接近すると、どちらも「まだ無い」と判定してから
+    # 両方が書き込む余地がある(TOCTOU)。`stats` は1時間1行を後から訂正できない
+    # 設計なので、重複が入ると恒久的に残ってしまう。
+    # そこでDB側に部分ユニークインデックス stats_jst_hour_unique
+    # (date_trunc('hour', created_at, 'Asia/Tokyo') に対する UNIQUE) を張り、
+    # 競合したINSERTは必ず片方だけが成功するようにしてある。
+    # ここで一意制約違反を捕まえるのは「もう片方のrunが書き終えた」という意味なので、
+    # 例外にせず「既に記録済み」と同じ扱い(False)で静かに戻る。
+    try:
+        supabase_client.table(TABLE_NAME).insert(record).execute()
+    except Exception as e:
+        if _is_duplicate_hour_error(e):
+            print(f"  Supabase archive: {record['created_at']} は別runが記録済み"
+                  f"（一意制約で重複を回避）", flush=True)
+            return False
+        raise
     print(f"  Supabase archive: {record['created_at']} を記録", flush=True)
     _clear_button_stats_cache()
     return True

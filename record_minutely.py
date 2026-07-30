@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import video_data
 import youtube_channel_stats
 import hourly_archive
-from key_rotation import fetch_with_rotation
+from key_rotation import fetch_with_rotation, init_state as init_key_state
 from turso_client import TursoClient
 
 _CREATE_TABLE = """
@@ -55,6 +55,10 @@ VIDEO_ID = os.getenv("VIDEO_ID")
 turso = TursoClient(os.getenv("TURSO_URL"), os.getenv("TURSO_AUTH_TOKEN"))
 turso.execute(_CREATE_TABLE)
 turso.execute(_CREATE_INDEX)
+
+# 前回の実行がどのキーまで使い切っていたかを引き継ぐ（毎分プロセスが
+# 作り直されるため、これが無いと枯渇済みキーへの無駄な呼び出しが毎分出る）。
+init_key_state(turso)
 
 wait_until_next_minute()
 now_utc = datetime.now(timezone.utc)

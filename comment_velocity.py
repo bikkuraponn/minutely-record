@@ -38,21 +38,62 @@ Details 参照)。YouTube API の commentThreads.list(order="time") はページ
 対象外になる。そのため文字列マッチのハックはここでは意図的に移植していない。
 唯一の例外は「直近1時間以内に新しくピン留めされたコメント」だが、これは
 実質的に新規コメントそのものなのでカウントされて問題ない。
+
+【集計をSQL側に寄せている理由(2026-07-29)】
+以前は「スレッドIDを全部引く → 200件ずつ IN() に詰めて返信を引く → Python側で
+1行ずつ数える」という組み立てだった。これはスレッドIDと返信の全行をHTTPで
+運んでから捨てているだけで、チャンクごとに別リクエストを往復するぶん遅く、
+コメントが伸びるほど転送量も比例して増えていた。
+
+親子の対応付けは JOIN で、件数は GROUP BY handle で、いずれもSQL側で完結できる。
+書き換え後は3クエリ固定で、返るのは「ハンドルごとの件数」だけ(数百行程度)。
+EXPLAIN QUERY PLAN で3本とも両側が idx_parent_published の SEARCH になることを
+確認済み(SCANなし)。
 """
 
-IN_CHUNK = 200  # Turso IN() 節のチャンクサイズ(comment_syncのRECHECK_IN_CHUNKと同じ考え方)
+
+def _grouped_counts(turso_client, sql: str, args: list) -> tuple[dict[str, int], int]:
+    """GROUP BY handle の結果を ({handle: count}, 総件数) に変換する。
+
+    handle が NULL の行も総件数には含めるが、アカウント別の内訳には入れない
+    (旧実装の `if handle:` と同じ扱い)。
+    """
+    account: dict[str, int] = {}
+    total = 0
+    for row in turso_client.query(sql, args):
+        c = row["c"]
+        total += c
+        handle = row["handle"]
+        if handle:
+            account[handle] = account.get(handle, 0) + c
+    return account, total
 
 
-def _chunked_in_query(turso_client, sql_template: str, ids: list[str], extra_args: list | None = None):
-    """ids を IN_CHUNK 件ずつに分けて sql_template (id用の1個の '?' を含む) を実行し、行を結合して返す。"""
-    rows = []
-    for i in range(0, len(ids), IN_CHUNK):
-        chunk = ids[i:i + IN_CHUNK]
-        placeholders = ",".join("?" for _ in chunk)
-        sql = sql_template.format(placeholders=placeholders)
-        args = list(chunk) + (extra_args or [])
-        rows.extend(turso_client.query(sql, args))
-    return rows
+_FRESH_THREADS_SQL = """
+SELECT handle, COUNT(*) AS c FROM comments
+WHERE parent_id IS NULL AND published_at >= ? AND is_deleted = 0
+GROUP BY handle
+"""
+
+# 直近スレッドの返信は投稿時刻を問わず全部(モジュールdocstring参照)。
+_FRESH_REPLIES_SQL = """
+SELECT r.handle AS handle, COUNT(*) AS c
+FROM comments r JOIN comments t ON r.parent_id = t.comment_id
+WHERE t.parent_id IS NULL AND t.published_at >= ? AND t.is_deleted = 0
+  AND r.is_deleted = 0
+GROUP BY r.handle
+"""
+
+# hours〜extended_hours 時間前のスレッド: スレッド自体は対象外、
+# 直近 hours 時間以内の返信のみカウント。
+_OLDER_REPLIES_SQL = """
+SELECT r.handle AS handle, COUNT(*) AS c
+FROM comments r JOIN comments t ON r.parent_id = t.comment_id
+WHERE t.parent_id IS NULL AND t.published_at >= ? AND t.published_at < ?
+  AND t.is_deleted = 0
+  AND r.is_deleted = 0 AND r.published_at >= ?
+GROUP BY r.handle
+"""
 
 
 def get_recent_comment_counts(turso_client, now_epoch: int, hours: int = 1, extended_hours: int = 3) -> dict:
@@ -63,59 +104,26 @@ def get_recent_comment_counts(turso_client, now_epoch: int, hours: int = 1, exte
     cutoff_extended = now_epoch - extended_hours * 3600
 
     account: dict[str, int] = {}
-    count = 0
-    thread_count = 0
 
-    def _add(handle: str | None, n: int = 1) -> None:
-        nonlocal count
-        if handle:
-            account[handle] = account.get(handle, 0) + n
-        count += n
+    def _merge(part: dict[str, int]) -> None:
+        for handle, c in part.items():
+            account[handle] = account.get(handle, 0) + c
 
-    # --- 直近 hours 時間以内のスレッド ---
     # 固定コメント対策の文字列マッチは意図的に移植していない
     # (published_at で絞り込む時点で固定コメントは自然に対象外になるため。
     #  モジュールdocstring参照)。
-    fresh_threads = turso_client.query(
-        "SELECT comment_id, handle FROM comments "
-        "WHERE parent_id IS NULL AND published_at >= ? AND is_deleted = 0",
-        [cutoff_recent],
+    thread_acc, thread_count = _grouped_counts(turso_client, _FRESH_THREADS_SQL, [cutoff_recent])
+    _merge(thread_acc)
+
+    fresh_reply_acc, fresh_reply_count = _grouped_counts(
+        turso_client, _FRESH_REPLIES_SQL, [cutoff_recent]
     )
-    fresh_thread_ids = [t["comment_id"] for t in fresh_threads]
+    _merge(fresh_reply_acc)
 
-    for t in fresh_threads:
-        thread_count += 1
-        _add(t.get("handle"))
-
-    # 直近スレッドの返信は投稿時刻を問わず全部(モジュールdocstring参照)。
-    if fresh_thread_ids:
-        fresh_replies = _chunked_in_query(
-            turso_client,
-            "SELECT parent_id, handle FROM comments "
-            "WHERE parent_id IN ({placeholders}) AND is_deleted = 0",
-            fresh_thread_ids,
-        )
-        for r in fresh_replies:
-            _add(r.get("handle"))
-
-    # --- hours〜extended_hours 時間前のスレッド: スレッド自体は対象外、
-    #     直近 hours 時間以内の返信のみカウント ---
-    older_threads = turso_client.query(
-        "SELECT comment_id FROM comments "
-        "WHERE parent_id IS NULL AND published_at >= ? AND published_at < ? AND is_deleted = 0",
-        [cutoff_extended, cutoff_recent],
+    older_reply_acc, older_reply_count = _grouped_counts(
+        turso_client, _OLDER_REPLIES_SQL, [cutoff_extended, cutoff_recent, cutoff_recent]
     )
-    older_thread_ids = [t["comment_id"] for t in older_threads]
+    _merge(older_reply_acc)
 
-    if older_thread_ids:
-        older_replies = _chunked_in_query(
-            turso_client,
-            "SELECT parent_id, handle FROM comments "
-            "WHERE parent_id IN ({placeholders}) AND is_deleted = 0 AND published_at >= ?",
-            older_thread_ids,
-            extra_args=[cutoff_recent],
-        )
-        for r in older_replies:
-            _add(r.get("handle"))
-
+    count = thread_count + fresh_reply_count + older_reply_count
     return {"account": account, "thread_count": thread_count, "count": count}
