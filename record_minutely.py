@@ -67,6 +67,15 @@ video_stats = fetch_with_rotation(video_data.get_video_stats, VIDEO_ID)
 channel_stats = fetch_with_rotation(youtube_channel_stats.get_channel_statistics, "[REDACTED_CHANNEL_ID]", turso)
 lailala_stats = fetch_with_rotation(youtube_channel_stats.get_channel_statistics, [REDACTED]_CHANNEL_ID, turso)
 
+# get_channel_statistics()はchannels.listがitemsを返さない場合(削除/非公開化、
+# または一時的なAPI不具合)にNoneを返す設計。そのまま添字アクセスすると
+# このTurso書き込みより前で意味不明な TypeError になるため、原因を明示して
+# ここで止める(この分のstats_minutely行は書かれない=挙動自体は従来通り)。
+if channel_stats is None:
+    raise RuntimeError("get_channel_statistics returned None for the main channel (channels.list items empty)")
+if lailala_stats is None:
+    raise RuntimeError("get_channel_statistics returned None for the second tracked channel (channels.list items empty)")
+
 # 毎分のTurso書き込みは、この後の毎時Supabaseアーカイブの成否に一切影響
 # されてはいけない(karotter_bot分割の教訓と同じ: 後段の失敗が前段を止めない)。
 # そのため必ずこのTurso書き込みを先に完了させる。
