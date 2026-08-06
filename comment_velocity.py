@@ -22,11 +22,11 @@ comment_count2/thread_count/comment_account の Turso版計算。
 この場合常に同じ集合になる。
 
 【固定コメント対策について(2026-07-28)】
-元の supabase_record/comment_count.py には `if "[REDACTED_PINNED_COMMENT_TEXT]" not in text:` という
-説明コメント無しの文字列マッチがあった。これは「スパム除外」ではなく、実際には
-この動画の固定コメント本文そのものを直接ハードコードした固定コメント除外策
-だった(動画投稿者に確認して判明。詳細は AGENTS.md の Non-obvious Implementation
-Details 参照)。YouTube API の commentThreads.list(order="time") はページネーション
+元の supabase_record/comment_count.py には特定の固定コメント本文全体との
+完全一致だけを条件にした、説明コメント無しの文字列マッチがあった。これは
+「スパム除外」ではなく、実際にはこの動画の固定コメント本文そのものを直接
+ハードコードした固定コメント除外策だった(動画投稿者に確認して判明。詳細は
+AGENTS.md の Non-obvious Implementation Details 参照)。YouTube API の commentThreads.list(order="time") はページネーション
 順として固定コメントを常に先頭に返す(実際の投稿時刻に関係なく)ため、ライブ
 クロールではこれを識別する手段がAPI上に無く、既知の固定コメント文言との
 文字列一致という場当たり的な方法に頼っていた。

@@ -33,6 +33,7 @@ jobs:
           YOUTUBE_API_KEY3: ${{ secrets.YOUTUBE_API_KEY3 }}
           VIDEO_ID: ${{ vars.VIDEO_ID }}
           CHANNEL_ID: ${{ vars.CHANNEL_ID }}
+          [REDACTED]_CHANNEL_ID: ${{ vars.[REDACTED]_CHANNEL_ID }}
           TURSO_URL: ${{ secrets.TURSO_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

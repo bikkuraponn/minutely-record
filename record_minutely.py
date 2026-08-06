@@ -50,7 +50,8 @@ def parse_timestamp():
 
 dotenv.load_dotenv(Path(__file__).parent.parent / "flaskr" / ".env")
 VIDEO_ID = os.getenv("VIDEO_ID")
-[REDACTED]_CHANNEL_ID = "[REDACTED_[REDACTED]_CHANNEL_ID]"
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+[REDACTED]_CHANNEL_ID = os.getenv("[REDACTED]_CHANNEL_ID")
 
 turso = TursoClient(os.getenv("TURSO_URL"), os.getenv("TURSO_AUTH_TOKEN"))
 turso.execute(_CREATE_TABLE)
@@ -64,7 +65,7 @@ wait_until_next_minute()
 now_utc = datetime.now(timezone.utc)
 
 video_stats = fetch_with_rotation(video_data.get_video_stats, VIDEO_ID)
-channel_stats = fetch_with_rotation(youtube_channel_stats.get_channel_statistics, "[REDACTED_CHANNEL_ID]", turso)
+channel_stats = fetch_with_rotation(youtube_channel_stats.get_channel_statistics, CHANNEL_ID, turso)
 lailala_stats = fetch_with_rotation(youtube_channel_stats.get_channel_statistics, [REDACTED]_CHANNEL_ID, turso)
 
 # get_channel_statistics()はchannels.listがitemsを返さない場合(削除/非公開化、
